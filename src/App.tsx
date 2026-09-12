@@ -1,12 +1,12 @@
-import { FormEvent, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
-  Bot, Clapperboard, FolderOpen, Globe2, Loader2, MessageSquareText, Plus,
-  Search, Settings, Sparkles, Upload, WandSparkles, CheckCircle2
+  Clapperboard, Loader2, MessageSquareText, Plus,
+  Sparkles, Upload, WandSparkles, CheckCircle2
 } from 'lucide-react'
 import { fileToDataUrl, postJSON } from './api'
+import { AccountMenu, PrivateChat, accountRequest } from './Accounts'
 
 type Workspace = 'chat' | 'video' | 'motion'
-type ChatMessage = { role: 'user' | 'assistant'; text: string }
 
 const meta = {
   chat: { title: 'Chat & Research', subtitle: 'Ask anything, search the live web, and work with project context.', icon: MessageSquareText },
@@ -21,73 +21,28 @@ export default function App() {
   return <div className="shell">
     <aside>
       <div className="brand"><div className="logo"><Sparkles size={18}/></div><div><b>NomadJarvis</b><small>AI workspace</small></div></div>
-      <button className="new"><Plus size={17}/> New project</button>
+      <button className="new" onClick={()=>{setWorkspace('chat');window.dispatchEvent(new Event('nomad-new-chat'))}}><Plus size={17}/> New conversation</button>
       {(Object.keys(meta) as Workspace[]).map(k => {
         const I = meta[k].icon
         return <button className={`nav ${workspace===k?'active':''}`} onClick={()=>setWorkspace(k)} key={k}><I size={18}/><span>{meta[k].title}</span></button>
       })}
       <div className="spacer"/>
-      <button className="nav"><FolderOpen size={18}/><span>Projects</span></button>
-      <button className="nav"><Settings size={18}/><span>Settings</span></button>
+      <AccountMenu />
     </aside>
 
     <main>
       <header>
         <div><div className="header-title"><ActiveIcon size={21}/><h1>{M.title}</h1></div><p>{M.subtitle}</p></div>
-        <div className="online"><span/> API-ready</div>
+        <div className="online"><span/> Private workspace</div>
       </header>
-      {workspace==='chat' && <Chat />}
+      {workspace==='chat' && <PrivateChat />}
       {workspace==='video' && <Video />}
       {workspace==='motion' && <Motion />}
     </main>
   </div>
 }
 
-function Chat(){
-  const [messages,setMessages]=useState<ChatMessage[]>([])
-  const [input,setInput]=useState('')
-  const [busy,setBusy]=useState(false)
-  const [web,setWeb]=useState(true)
-  const [error,setError]=useState('')
-
-  async function submit(e:FormEvent){
-    e.preventDefault()
-    if(!input.trim()||busy)return
-    const question=input.trim()
-    setInput('')
-    setError('')
-    setMessages(m=>[...m,{role:'user',text:question}])
-    setBusy(true)
-    try{
-      const data=await postJSON<{answer:string}>('/api/chat',{message:question,useWeb:web})
-      setMessages(m=>[...m,{role:'assistant',text:data.answer}])
-    }catch(err:any){ setError(err.message) }
-    finally{ setBusy(false) }
-  }
-
-  return <section className="workspace chat">
-    <div className="chat-stream">
-      {messages.length===0 && <div className="welcome">
-        <div className="big-orb"><Bot size={33}/></div>
-        <h2>What are we working on?</h2>
-        <p>This is now wired for OpenAI + optional live web search once your Cloudflare secret is added.</p>
-      </div>}
-      {messages.map((m,i)=><div key={i} className={`bubble ${m.role}`}>{m.text}</div>)}
-      {busy && <div className="bubble assistant loading"><Loader2 className="spin" size={16}/> Thinking…</div>}
-      {error && <div className="error">{error}</div>}
-    </div>
-    <form className="composer" onSubmit={submit}>
-      <textarea value={input} onChange={e=>setInput(e.target.value)} placeholder="Ask NomadJarvis anything…" onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();e.currentTarget.form?.requestSubmit()}}}/>
-      <div className="composer-footer">
-        <button type="button" className={`tool ${web?'selected':''}`} onClick={()=>setWeb(v=>!v)}><Globe2 size={16}/> Web {web?'on':'off'}</button>
-        <button className="send" disabled={busy||!input.trim()}>Send</button>
-      </div>
-    </form>
-  </section>
-}
-
 function Video(){
-  const [file,setFile]=useState<File|null>(null)
   const [preview,setPreview]=useState('')
   const [prompt,setPrompt]=useState('')
   const [busy,setBusy]=useState(false)
@@ -97,7 +52,7 @@ function Video(){
 
   async function choose(f?:File){
     if(!f)return
-    setFile(f); setApproved(false); setPrompt(''); setError('')
+    setApproved(false); setPrompt(''); setError('')
     const data=await fileToDataUrl(f); setPreview(data)
     setBusy(true); setStatus('Analyzing image and writing cinematic prompt…')
     try{
@@ -117,6 +72,7 @@ function Video(){
   }
 
   return <section className="workspace studio">
+    <Draft kind="video" state={{prompt}} restore={s=>{if(typeof s.prompt==='string')setPrompt(s.prompt)}}/>
     <div className="panel">
       <Step n="1" title="Source image" sub="Upload a reference image."/>
       <label className="drop">
@@ -156,6 +112,7 @@ function Motion(){
   }
 
   return <section className="workspace studio">
+    <Draft kind="motion" state={{transcript,plan}} restore={s=>{if(typeof s.transcript==='string')setTranscript(s.transcript);if(typeof s.plan==='string')setPlan(s.plan)}}/>
     <div className="panel full">
       <Step n="1" title="Interview" sub="Choose your video; paste or add transcript below."/>
       <label className="drop compact">
@@ -179,4 +136,11 @@ function Motion(){
 
 function Step({n,title,sub}:{n:string,title:string,sub:string}){
   return <div className="step"><span>{n}</span><div><h3>{title}</h3><p>{sub}</p></div></div>
+}
+
+function Draft({kind,state,restore}:{kind:'video'|'motion';state:Record<string,string>;restore:(state:Record<string,string>)=>void}){
+  const [loading,setLoading]=useState(true),[saving,setSaving]=useState(false),[notice,setNotice]=useState(''),[error,setError]=useState('')
+  useEffect(()=>{let active=true;void accountRequest<{state:Record<string,string>|null}>('studio&kind='+kind).then(r=>{if(active&&r.state)restore(r.state)}).catch(e=>{if(active)setError(e.message)}).finally(()=>{if(active)setLoading(false)});return()=>{active=false}},[kind])
+  async function save(){setSaving(true);setError('');setNotice('');try{await accountRequest('studio&kind='+kind,'PUT',state);setNotice('Draft saved to your account.')}catch(e){setError((e as Error).message)}finally{setSaving(false)}}
+  return <div className="panel full"><div className="row"><span className="muted">{loading?'Loading your draft…':'Save your text and plans to return to later. Reattach source files when needed.'}</span><button className="primary" disabled={loading||saving} onClick={()=>void save()}>{saving?'Saving…':'Save draft'}</button></div>{notice&&<p role="status">{notice}</p>}{error&&<p className="error" role="alert">{error}</p>}</div>
 }
