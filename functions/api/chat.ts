@@ -9,7 +9,7 @@ export async function chat(request: Request, env: AccountEnv, call: typeof fetch
     id = textField(data,'conversationId',100)
     if (!await env.DB.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').bind(id,user.id).first()) throw new HttpError(404,'Conversation not found.')
   } else { id = crypto.randomUUID() }
-  const history = (await env.DB.prepare('SELECT role,content FROM messages WHERE conversation_id=? AND user_id=? ORDER BY created_at DESC,id DESC LIMIT 30').bind(id,user.id).all<Message>()).results.reverse()
+  const history = (await env.DB.prepare('SELECT role,content FROM messages WHERE conversation_id=? AND user_id=? ORDER BY created_at DESC,id DESC LIMIT 50').bind(id,user.id).all<Message>()).results.reverse()
   const memories=(await env.DB.prepare('SELECT content FROM memories WHERE user_id=? ORDER BY updated_at DESC LIMIT 100').bind(user.id).all<{content:string}>()).results.map(m=>m.content).join('\n').slice(0,16000)
   const payload = {
     model:'gpt-5.6',
